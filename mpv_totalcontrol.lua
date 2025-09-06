@@ -200,6 +200,9 @@ function parseFiles(res, delimiter)
 				table.insert(playableFiles, line)
 			end
 		end
+		if not settings.orderBySize then
+			table.sort(playableFiles)
+		end
 		return playableFiles, nil
 	else
 		return nil, res.error
