@@ -292,7 +292,6 @@ function moveToFile(step)
 	local foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
 
 	if foundIndex ~= -1 then
-		clearLoopPoints()
 		nextIndex = foundIndex + step
 		if nextIndex > #settings.fileList then
 			nextIndex = 1
@@ -704,10 +703,20 @@ end
 
 
 
+function handleEndFile(evt)
+	-- mp.commandv("show_text", evt.reason)
+	clearLoopPoints()
+end
+
+
+
+
+
 function main()
 	generateShaderFileData()
 	settings.shaderPresets = deepCopy(presets01)
 	bindKeys()
+	mp.register_event("end-file", handleEndFile)
 end
 
 main()
