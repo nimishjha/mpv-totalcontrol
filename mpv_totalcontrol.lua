@@ -191,6 +191,10 @@ function getFilesLinux(dir)
 	return parseFiles(directoryListing, '\n')
 end
 
+function sortCaseInsensitive(a, b)
+	return string.lower(a) < string.lower(b)
+end
+
 function parseFiles(res, delimiter)
 	if not res.error and res.status == 0 then
 		local playableFiles = {}
@@ -201,7 +205,7 @@ function parseFiles(res, delimiter)
 			end
 		end
 		if not settings.orderBySize then
-			table.sort(playableFiles)
+			table.sort(playableFiles, sortCaseInsensitive)
 		end
 		return playableFiles, nil
 	else
