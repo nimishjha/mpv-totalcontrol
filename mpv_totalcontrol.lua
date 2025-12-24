@@ -2,18 +2,18 @@ local utils = require 'mp.utils'
 local msg = require 'mp.msg'
 
 local presets01 = {
-	{ "Curve/Curve_06.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_16.glsl", "Blue/Blue_00.glsl" },
+	{ "Curve/Curve_00.glsl", "Red/xRedGray01.glsl" },
+	{ "Curve/Curve_00.glsl", "Red/xRedGray02.glsl" },
+	{ "Curve/Curve_00.glsl", "Red/xRed_Soft01.glsl" },
+	{ "Curve/Curve_00.glsl", "Red/xRed_Soft02.glsl" },
+	{ "Red/xRedGray02.glsl", "Dim/Linear50.glsl" },
+	{ "Red/xRedGray02.glsl", "Curve/Curve_02.glsl" },
 	{ "Curve/Curve_26.glsl", "Blue/Blue_00.glsl" },
 	{ "Curve/Curve_29.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_06.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_16.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_26.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_29.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_06.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_16.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_26.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_29.glsl", "Blue/Blue_00.glsl" },
+	{ "ExperimentalC/ExperimentalC_01.glsl", "Curve/Curve_02.glsl" },
+	{ "Curve/Curve_00.glsl", "LightTint/LightTint_sepia.glsl" },
+	{ "Curve/Curve_00.glsl", "Blue/Blue_00.glsl" },
+	{ "Curve/Curve_00.glsl", "Blue/Blue_00.glsl" },
 }
 
 local shaderGroupsByKey = {
@@ -258,6 +258,7 @@ function loadFile(filename)
 	if doesFileExist then
 		mp.commandv("show_text", filename)
 		mp.commandv("loadfile", fullpath, "replace")
+		msg.warn(filename)
 	else
 		cacheFileList()
 	end
@@ -570,6 +571,20 @@ function loadShaderPreset(presetNumber)
 	end
 end
 
+function dumpShaderPresets()
+	local outputFilePath = "/mnt/ramdisk/mpvShaderPresets.txt"
+	local shaderPresets = {}
+	for _, preset in ipairs(settings.shaderPresets) do
+		table.insert(shaderPresets, '{ "' .. preset[1] .. '", "' .. preset[2] .. '" },\n')
+	end
+	local writeStatus = writeStringToFile(outputFilePath, table.concat(shaderPresets))
+	if writeStatus == 0 then
+		mp.commandv("show_text", "Dumped shader presets to " .. outputFilePath)
+	else
+		mp.commandv("show_text", "Could not write to file " .. outputFilePath)
+	end
+end
+
 function resetShaderPresets()
 	settings.shaderPresets = deepCopy(presets01)
 	mp.commandv("show_text", "Restored shader presets")
@@ -625,6 +640,70 @@ end
 function clearLoopPoints()
 	mp.set_property("ab-loop-a", "no")
 	mp.set_property("ab-loop-b", "no")
+end
+
+
+
+
+
+function writeStringToFile(outputFilePath, str)
+	local file = io.open(outputFilePath, "a")
+	if file then
+		file:write(str)
+		file:close()
+		return 0
+	else
+		mp.msg.error("Could not open file for writing: " .. outputFilePath)
+		return 1
+	end
+end
+
+
+
+
+
+function generateDeleteCommand()
+	local currentFilePath = mp.get_property("path")
+	local outputFilePath = "/mnt/ramdisk/mpvDelete.sh"
+
+	if currentFilePath then
+		local writeStatus = writeStringToFile(outputFilePath, "rm '" .. currentFilePath .. "'\n")
+		if writeStatus == 0 then
+			mp.commandv("show_text", "marked for deletion")
+		else
+			mp.commandv("show_text", "Could not write to file " .. outputFilePath)
+		end
+	end
+end
+
+function generateRenameCommand()
+	local currentFilePath = mp.get_property("path")
+	local outputFilePath = "/mnt/ramdisk/mpvRename.sh"
+
+	if currentFilePath then
+		local dir = utils.split_path(currentFilePath)
+		local filename = mp.get_property("filename")
+		local newPath = utils.join_path(dir, "aaa " .. filename)
+		local writeStatus = writeStringToFile(outputFilePath, "mv '" .. currentFilePath .. "' '" .. newPath .. "'\n")
+		if writeStatus == 0 then
+			mp.commandv("show_text", "marked for rename")
+		else
+			mp.commandv("show_text", "Could not write to file " .. outputFilePath)
+		end
+	end
+end
+
+
+function testKP7()
+	mp.commandv("show_text", "KP7")
+end
+
+function testKP8()
+	mp.commandv("show_text", "KP8")
+end
+
+function testKP9()
+	mp.commandv("show_text", "KP9")
 end
 
 
@@ -697,6 +776,14 @@ function bindKeys()
 
 	mp.add_forced_key_binding('Ctrl+o',           'toggleOrderBySize',      toggleOrderBySize)
 	mp.add_forced_key_binding('Ctrl+u',           'generateShaderFileData', generateShaderFileData)
+
+	mp.add_forced_key_binding('Ctrl+z',           'generateDeleteCommand',  generateDeleteCommand)
+	mp.add_forced_key_binding('Ctrl+x',           'generateRenameCommand',  generateRenameCommand)
+	mp.add_forced_key_binding('Ctrl+v',           'dumpShaderPresets',      dumpShaderPresets)
+
+	mp.add_forced_key_binding('KP7',              'kp7',                    testKP7)
+	mp.add_forced_key_binding('KP8',              'kp8',                    testKP8)
+	mp.add_forced_key_binding('KP9',              'kp9',                    testKP9)
 end
 
 
