@@ -1,20 +1,8 @@
 local utils = require 'mp.utils'
 local msg = require 'mp.msg'
+local input = require 'mp.input'
 
-local presets01 = {
-	{ "Curve/Curve_00.glsl", "Red/xRedGray01.glsl" },
-	{ "Curve/Curve_00.glsl", "Red/xRedGray02.glsl" },
-	{ "Curve/Curve_00.glsl", "Red/xRed_Soft01.glsl" },
-	{ "Curve/Curve_00.glsl", "Red/xRed_Soft02.glsl" },
-	{ "Red/xRedGray02.glsl", "Dim/Linear50.glsl" },
-	{ "Red/xRedGray02.glsl", "Curve/Curve_02.glsl" },
-	{ "Curve/Curve_26.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_29.glsl", "Blue/Blue_00.glsl" },
-	{ "ExperimentalC/ExperimentalC_01.glsl", "Curve/Curve_02.glsl" },
-	{ "Curve/Curve_00.glsl", "LightTint/LightTint_sepia.glsl" },
-	{ "Curve/Curve_00.glsl", "Blue/Blue_00.glsl" },
-	{ "Curve/Curve_00.glsl", "Blue/Blue_00.glsl" },
-}
+local shaderPresetsFromConfig = {}
 
 local shaderGroupsByKey = {
 	q = 'Blue',
@@ -23,19 +11,23 @@ local shaderGroupsByKey = {
 	r = 'Red',
 	t = 'Tint',
 	y = 'Green',
-	u = 'LightTint',
+	u = 'Psychedelic02',
 	i = 'Invert',
-	o = 'ChannelMixer',
+	o = 'Orange',
 	p = 'ColorRamp',
 	a = 'Bright',
 	s = 'Dim',
 	d = 'Saturate',
+	D = 'Distort',
 	f = 'SaturateSelective',
 	F = 'FilmicCurve',
 	g = 'Grayscale',
 	h = 'Blend',
+	H = 'HueRotate',
 	k = 'Curve',
+	l = 'ChannelMixer',
 	z = 'ExperimentalZ',
+	Z = 'Zoom',
 	x = 'ExperimentalX',
 	c = 'ExperimentalC',
 	C = 'Crop',
@@ -60,6 +52,7 @@ local equalizerPresets = {
 }
 
 local settings = {
+	shaderPresetsFilePath = "/mnt/ramdisk/mpvShaderPresets.lua",
 	fileTypesToHandle = {
 		jpg  = true,
 		jpeg = true,
@@ -77,6 +70,7 @@ local settings = {
 		opus = true,
 		mkv  = true,
 		avi  = true,
+		avif = true,
 		mp4  = true,
 		ogv  = true,
 		webm = true,
@@ -102,11 +96,40 @@ local settings = {
 	shaderIndexByFileName = {},
 	pass1 = "",
 	pass2 = "",
+	pass3 = "",
 	whichPass = "pass2",
 	shadersGrouped = {},
 	shaderCountsByGroup = {},
 	shaderPresets = {},
+	renamePrefix = "aaa ",
+	debugMode = false
 }
+
+
+
+
+
+function showText(str)
+	mp.commandv("show_text", str)
+	msg.warn(str)
+end
+
+function loadShaderPresets()
+	local file = loadfile(settings.shaderPresetsFilePath)
+	if file then
+		local success, result = pcall(file)
+		if success and type(result) == "table" then
+			shaderPresetsFromConfig = result
+			msg.warn("Loaded shader presets from " .. settings.shaderPresetsFilePath)
+			return true
+		else
+			msg.error("Error loading shader presets:" .. tostring(result))
+		end
+	else
+		msg.error("Could not open file:", settings.shaderPresetsFilePath)
+	end
+	return false
+end
 
 function deepCopy(original)
 	local copy
@@ -174,9 +197,9 @@ function generateShaderFileData()
 		msg.warn(string.format("        %s %02s", padToWidth(groupName, 20), settings.shaderCountsByGroup[groupName]))
 		shaderCount = shaderCount + settings.shaderCountsByGroup[groupName]
 	end
+
 	local numShadersMessage = string.format("Found %d shaders", shaderCount)
-	msg.warn(numShadersMessage)
-	mp.commandv("show_text", numShadersMessage)
+	showText(numShadersMessage)
 end
 
 function getFilesLinux(dir)
@@ -248,7 +271,7 @@ end
 
 function checkFileExists(path)
 	local command = {"test", "-e", path}
-	local res = utils.subprocess({args = command, cancellable = false})
+	local res = utils.subprocess({ args = command, cancellable = false })
 	return res.status == 0
 end
 
@@ -291,6 +314,11 @@ function moveToFile(step)
 	local currentFileName = mp.get_property("filename")
 	local nextIndex = 0
 	local foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
+
+	if foundIndex == -1 then
+		cacheFileList()
+		foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
+	end
 
 	if foundIndex ~= -1 then
 		nextIndex = foundIndex + step
@@ -344,21 +372,21 @@ end
 
 
 
-function toggleShaderPass()
-	if settings.whichPass == "pass1" then
-		mp.commandv("show_text", "mode: pass2")
-		settings.whichPass = "pass2"
-	else
-		mp.commandv("show_text", "mode: pass1")
-		settings.whichPass = "pass1"
-	end
-end
-
 function swapShaderPasses()
-	if isValidShaderName(settings.pass1) and isValidShaderName(settings.pass2) then
+	local isPassOneSet = isValidShaderName(settings.pass1)
+	local isPassTwoSet = isValidShaderName(settings.pass2)
+	if isPassOneSet and isPassTwoSet then
 		local temp = settings.pass1
 		settings.pass1 = settings.pass2
 		settings.pass2 = temp
+		applyShaders()
+	elseif isPassOneSet then
+		settings.pass2 = settings.pass1
+		settings.pass1 = ""
+		applyShaders()
+	elseif isPassTwoSet then
+		settings.pass1 = settings.pass2
+		settings.pass2 = ""
 		applyShaders()
 	else
 		mp.commandv("show_text", "Both shader passes need to be set")
@@ -375,6 +403,11 @@ function setShaderPass2()
 	settings.whichPass = "pass2"
 end
 
+function setShaderPass3()
+	mp.commandv("show_text", "mode: Pass 3")
+	settings.whichPass = "pass3"
+end
+
 function clearShaderPass1()
 	settings.pass1 = ""
 	applyShaders()
@@ -385,6 +418,12 @@ function clearShaderPass2()
 	settings.pass2 = ""
 	applyShaders()
 	setShaderPass2()
+end
+
+function clearShaderPass3()
+	settings.pass3 = ""
+	applyShaders()
+	setShaderPass3()
 end
 
 function isValidShaderName(str)
@@ -455,31 +494,31 @@ function executeCommand()
 	end
 end
 
-function applyShaders()
-	local message = ""
+function buildShaderString()
 	local SHADERS_DIR = settings.shadersDir .. "/"
 	local LIST_SEPARATOR_UNIX = ":"
-	local LIST_SEPARATOR_WINDOWS = ";"
+	local messageSegments = {}
+	local shaderFilePaths = {}
 
-	if isValidShaderName(settings.pass1) then
-		if isValidShaderName(settings.pass2) then
-			local index1 = getIndexByFileName(settings.pass1)
-			local index2 = getIndexByFileName(settings.pass2)
-			message =  string.format("%s [%s] + %s [%s]", removeExtension(settings.pass1), index1, removeExtension(settings.pass2), index2)
-			mp.commandv("change-list", "glsl-shaders", "set", SHADERS_DIR .. settings.pass1 .. LIST_SEPARATOR_UNIX .. SHADERS_DIR .. settings.pass2)
-		else
-			local index = getIndexByFileName(settings.pass1)
-			message = string.format("Pass 1: %s [%s]", removeExtension(settings.pass1), index)
-			mp.commandv("change-list", "glsl-shaders", "set", SHADERS_DIR .. settings.pass1)
+	for index, pass in ipairs({ "pass1", "pass2", "pass3" }) do
+		if isValidShaderName(settings[pass]) then
+			local index = getIndexByFileName(settings[pass])
+			local message = string.format("%s [%s]", removeExtension(settings[pass]), index)
+			table.insert(messageSegments, message)
+			table.insert(shaderFilePaths, SHADERS_DIR .. settings[pass])
 		end
+	end
+
+	return table.concat(shaderFilePaths, LIST_SEPARATOR_UNIX), table.concat(messageSegments, ", ")
+end
+
+function applyShaders()
+	local shaderString, message = buildShaderString()
+
+	if string.len(shaderString) > 0 then
+		mp.commandv("change-list", "glsl-shaders", "set", shaderString)
 	else
-		if isValidShaderName(settings.pass2) then
-			local index = getIndexByFileName(settings.pass2)
-			message = string.format("Pass 2: %s [%s]", removeExtension(settings.pass2), index)
-			mp.commandv("change-list", "glsl-shaders", "set", SHADERS_DIR .. settings.pass2)
-		else
-			clearShaders()
-		end
+		clearShaders()
 	end
 
 	if string.len(message) > 0 then
@@ -491,6 +530,7 @@ function clearShaders()
 	mp.commandv("change-list", "glsl-shaders", "clr", "")
 	settings.pass1 = ""
 	settings.pass2 = ""
+	settings.pass3 = ""
 	settings.whichPass = "pass2"
 	mp.commandv("show_text", "GLSL shaders cleared")
 end
@@ -577,7 +617,7 @@ function dumpShaderPresets()
 	for _, preset in ipairs(settings.shaderPresets) do
 		table.insert(shaderPresets, '{ "' .. preset[1] .. '", "' .. preset[2] .. '" },\n')
 	end
-	local writeStatus = writeStringToFile(outputFilePath, table.concat(shaderPresets))
+	local writeStatus = writeStringToFile(outputFilePath, "\n" .. table.concat(shaderPresets))
 	if writeStatus == 0 then
 		mp.commandv("show_text", "Dumped shader presets to " .. outputFilePath)
 	else
@@ -586,8 +626,13 @@ function dumpShaderPresets()
 end
 
 function resetShaderPresets()
-	settings.shaderPresets = deepCopy(presets01)
-	mp.commandv("show_text", "Restored shader presets")
+	local loadingShaderPresetsSucceeded = loadShaderPresets()
+	if loadingShaderPresetsSucceeded then
+		settings.shaderPresets = deepCopy(shaderPresetsFromConfig)
+		showText("Restored shader presets")
+	else
+		showText("Could not load shader presets")
+	end
 end
 
 
@@ -628,18 +673,31 @@ end
 
 
 function setLoopPointA()
-	mp.set_property("ab-loop-a", mp.get_property("time-pos"))
-	mp.commandv("show_text", "Point A set")
+	local timePos = mp.get_property("time-pos")
+	mp.set_property("ab-loop-a", timePos)
+	local message = "Point A set to " .. timePos
+	mp.commandv("show_text", message)
+	msg.warn(message)
 end
 
 function setLoopPointB()
-	mp.set_property("ab-loop-b", mp.get_property("time-pos"))
-	mp.commandv("show_text", "Point B set")
+	local timePos = mp.get_property("time-pos")
+	mp.set_property("ab-loop-b", timePos)
+	local message = "Point B set to " .. timePos
+	mp.commandv("show_text", message)
+	msg.warn(message)
+	local pointA = mp.get_property("ab-loop-a")
+	if pointA ~= "no" then
+		mp.commandv("seek", pointA, "absolute")
+	end
 end
 
-function clearLoopPoints()
+function clearLoopPoints(shouldSuppressMessage)
 	mp.set_property("ab-loop-a", "no")
 	mp.set_property("ab-loop-b", "no")
+	if not shouldSuppressMessage then
+		showText("Loop points cleared")
+	end
 end
 
 
@@ -683,27 +741,45 @@ function generateRenameCommand()
 	if currentFilePath then
 		local dir = utils.split_path(currentFilePath)
 		local filename = mp.get_property("filename")
-		local newPath = utils.join_path(dir, "aaa " .. filename)
+		local newName = settings.renamePrefix .. filename
+		local newPath = utils.join_path(dir, newName)
 		local writeStatus = writeStringToFile(outputFilePath, "mv '" .. currentFilePath .. "' '" .. newPath .. "'\n")
 		if writeStatus == 0 then
-			mp.commandv("show_text", "marked for rename")
+			mp.commandv("show_text", string.format("marked for rename to %s", newName))
 		else
 			mp.commandv("show_text", "Could not write to file " .. outputFilePath)
 		end
 	end
 end
 
-
-function testKP7()
-	mp.commandv("show_text", "KP7")
+function setRenamePrefix(prefix)
+	if string.len(prefix) > 0 then
+		settings.renamePrefix = prefix
+	end
 end
 
-function testKP8()
-	mp.commandv("show_text", "KP8")
+function promptForRenamePrefix()
+	input.get({
+		prompt = "Enter the prefix for renamed files:",
+		submit = setRenamePrefix
+	})
 end
 
-function testKP9()
-	mp.commandv("show_text", "KP9")
+
+
+
+function seekToSeconds(secondsString)
+	local secondsInt = tonumber(secondsString)
+	if type(secondsInt) == "number" then
+		mp.commandv("seek", secondsString, "absolute")
+	end
+end
+
+function promptForSecondsToSeekTo()
+	input.get({
+		prompt = "Enter the position to seek to in seconds:",
+		submit = seekToSeconds
+	})
 end
 
 
@@ -719,71 +795,67 @@ function bindKeys()
 		mp.add_forced_key_binding(tostring(i), 'setShaderNumber' .. i, setShaderNumber(i))
 	end
 
-	mp.add_forced_key_binding('HOME',             'moveToFirstFile',        moveToFirstFile)
-	mp.add_forced_key_binding('END',              'cacheFileList',          cacheFileList)
-	mp.add_forced_key_binding('PGDWN',            'moveToNextFile',         moveToNextFile)
-	mp.add_forced_key_binding('PGUP',             'moveToPreviousFile',     moveToPreviousFile)
-	mp.add_forced_key_binding('Ctrl+PGDWN',       'moveBy10',               moveBy(10))
-	mp.add_forced_key_binding('Ctrl+PGUP',        'moveBackBy10',           moveBy(-10))
-	mp.add_forced_key_binding('Ctrl+Shift+PGDWN', 'moveBy50',               moveBy(50))
-	mp.add_forced_key_binding('Ctrl+Shift+PGUP',  'moveBackBy50',           moveBy(-50))
-	mp.add_forced_key_binding('Alt+PGDWN',        'moveByRandomAmount',     moveByRandomAmount)
-
-	mp.add_forced_key_binding('Shift+F1',         'saveShader1',            saveShaderPreset(1))
-	mp.add_forced_key_binding('Shift+F2',         'saveShader2',            saveShaderPreset(2))
-	mp.add_forced_key_binding('Shift+F3',         'saveShader3',            saveShaderPreset(3))
-	mp.add_forced_key_binding('Shift+F4',         'saveShader4',            saveShaderPreset(4))
-	mp.add_forced_key_binding('Shift+F5',         'saveShader5',            saveShaderPreset(5))
-	mp.add_forced_key_binding('Shift+F6',         'saveShader6',            saveShaderPreset(6))
-	mp.add_forced_key_binding('Shift+F7',         'saveShader7',            saveShaderPreset(7))
-	mp.add_forced_key_binding('Shift+F8',         'saveShader8',            saveShaderPreset(8))
-	mp.add_forced_key_binding('Shift+F9',         'saveShader9',            saveShaderPreset(9))
-	mp.add_forced_key_binding('Shift+F10',        'saveShader10',           saveShaderPreset(10))
-	mp.add_forced_key_binding('Shift+F11',        'saveShader11',           saveShaderPreset(11))
-	mp.add_forced_key_binding('Shift+F12',        'saveShader12',           saveShaderPreset(12))
-
-	mp.add_forced_key_binding('F1',               'loadShader1',            loadShaderPreset(1))
-	mp.add_forced_key_binding('F2',               'loadShader2',            loadShaderPreset(2))
-	mp.add_forced_key_binding('F3',               'loadShader3',            loadShaderPreset(3))
-	mp.add_forced_key_binding('F4',               'loadShader4',            loadShaderPreset(4))
-	mp.add_forced_key_binding('F5',               'loadShader5',            loadShaderPreset(5))
-	mp.add_forced_key_binding('F6',               'loadShader6',            loadShaderPreset(6))
-	mp.add_forced_key_binding('F7',               'loadShader7',            loadShaderPreset(7))
-	mp.add_forced_key_binding('F8',               'loadShader8',            loadShaderPreset(8))
-	mp.add_forced_key_binding('F9',               'loadShader9',            loadShaderPreset(9))
-	mp.add_forced_key_binding('F10',              'loadShader10',           loadShaderPreset(10))
-	mp.add_forced_key_binding('F11',              'loadShader11',           loadShaderPreset(11))
-	mp.add_forced_key_binding('F12',              'loadShader12',           loadShaderPreset(12))
-
-	mp.add_forced_key_binding('`',                'clearShaders',           clearShaders)
-	mp.add_forced_key_binding('Ctrl+w',           'loadSplashScreen',       loadSplashScreen)
-
-	mp.add_forced_key_binding(';',                'setShaderPass1',         setShaderPass1)
-	mp.add_forced_key_binding("'",                'setShaderPass2',         setShaderPass2)
-	mp.add_forced_key_binding(":",                'clearShaderPass1',       clearShaderPass1)
-	mp.add_forced_key_binding('"',                'clearShaderPass2',       clearShaderPass2)
-	mp.add_forced_key_binding('=',                'swapShaderPasses',       swapShaderPasses)
-
-	mp.add_forced_key_binding("[",                'prevShader',             prevShader)
-	mp.add_forced_key_binding("]",                'nextShader',             nextShader)
-
-	mp.add_forced_key_binding('Ctrl+l',           'loadLastModifiedShader', loadLastModifiedShader)
-	mp.add_forced_key_binding('Ctrl+k',           'setDevShaderGroup',      setDevShaderGroup)
-	mp.add_forced_key_binding('Ctrl+p',           'resetShaderPresets',     resetShaderPresets)
-
-	mp.add_forced_key_binding("A",                'setLoopPointA',          setLoopPointA)
-	mp.add_forced_key_binding("S",                'setLoopPointB',          setLoopPointB)
-
-	mp.add_forced_key_binding('Ctrl+o',           'toggleOrderBySize',      toggleOrderBySize)
-	mp.add_forced_key_binding('Ctrl+u',           'generateShaderFileData', generateShaderFileData)
-
-	mp.add_forced_key_binding('Ctrl+z',           'generateDeleteCommand',  generateDeleteCommand)
-	mp.add_forced_key_binding('Ctrl+x',           'generateRenameCommand',  generateRenameCommand)
-	mp.add_forced_key_binding('Ctrl+v',           'dumpShaderPresets',      dumpShaderPresets)
-
-	mp.add_forced_key_binding('KP7',              'kp7',                    testKP7)
-	mp.add_forced_key_binding('KP8',              'kp8',                    testKP8)
-	mp.add_forced_key_binding('KP9',              'kp9',                    testKP9)
+	mp.add_forced_key_binding('HOME',             'moveToFirstFile',          moveToFirstFile)
+	mp.add_forced_key_binding('END',              'cacheFileList',            cacheFileList)
+	mp.add_forced_key_binding('PGDWN',            'moveToNextFile',           moveToNextFile)
+	mp.add_forced_key_binding('PGUP',             'moveToPreviousFile',       moveToPreviousFile)
+	mp.add_forced_key_binding('Ctrl+PGDWN',       'moveBy10',                 moveBy(10))
+	mp.add_forced_key_binding('Ctrl+PGUP',        'moveBackBy10',             moveBy(-10))
+	mp.add_forced_key_binding('Ctrl+Shift+PGDWN', 'moveBy50',                 moveBy(50))
+	mp.add_forced_key_binding('Ctrl+Shift+PGUP',  'moveBackBy50',             moveBy(-50))
+	mp.add_forced_key_binding('Alt+PGDWN',        'moveByRandomAmount',       moveByRandomAmount)
+	mp.add_forced_key_binding('Shift+F1',         'saveShader1',              saveShaderPreset(1))
+	mp.add_forced_key_binding('Shift+F2',         'saveShader2',              saveShaderPreset(2))
+	mp.add_forced_key_binding('Shift+F3',         'saveShader3',              saveShaderPreset(3))
+	mp.add_forced_key_binding('Shift+F4',         'saveShader4',              saveShaderPreset(4))
+	mp.add_forced_key_binding('Shift+F5',         'saveShader5',              saveShaderPreset(5))
+	mp.add_forced_key_binding('Shift+F6',         'saveShader6',              saveShaderPreset(6))
+	mp.add_forced_key_binding('Shift+F7',         'saveShader7',              saveShaderPreset(7))
+	mp.add_forced_key_binding('Shift+F8',         'saveShader8',              saveShaderPreset(8))
+	mp.add_forced_key_binding('Shift+F9',         'saveShader9',              saveShaderPreset(9))
+	mp.add_forced_key_binding('Shift+F10',        'saveShader10',             saveShaderPreset(10))
+	mp.add_forced_key_binding('Shift+F11',        'saveShader11',             saveShaderPreset(11))
+	mp.add_forced_key_binding('Shift+F12',        'saveShader12',             saveShaderPreset(12))
+	mp.add_forced_key_binding('F1',               'loadShader1',              loadShaderPreset(1))
+	mp.add_forced_key_binding('F2',               'loadShader2',              loadShaderPreset(2))
+	mp.add_forced_key_binding('F3',               'loadShader3',              loadShaderPreset(3))
+	mp.add_forced_key_binding('F4',               'loadShader4',              loadShaderPreset(4))
+	mp.add_forced_key_binding('F5',               'loadShader5',              loadShaderPreset(5))
+	mp.add_forced_key_binding('F6',               'loadShader6',              loadShaderPreset(6))
+	mp.add_forced_key_binding('F7',               'loadShader7',              loadShaderPreset(7))
+	mp.add_forced_key_binding('F8',               'loadShader8',              loadShaderPreset(8))
+	mp.add_forced_key_binding('F9',               'loadShader9',              loadShaderPreset(9))
+	mp.add_forced_key_binding('F10',              'loadShader10',             loadShaderPreset(10))
+	mp.add_forced_key_binding('F11',              'loadShader11',             loadShaderPreset(11))
+	mp.add_forced_key_binding('F12',              'loadShader12',             loadShaderPreset(12))
+	mp.add_forced_key_binding('`',                'clearShaders',             clearShaders)
+	mp.add_forced_key_binding(';',                'setShaderPass1alt',        setShaderPass1)
+	mp.add_forced_key_binding("'",                'setShaderPass2alt',        setShaderPass2)
+	mp.add_forced_key_binding(":",                'clearShaderPass1alt',      clearShaderPass1)
+	mp.add_forced_key_binding('"',                'clearShaderPass2alt',      clearShaderPass2)
+	mp.add_forced_key_binding('Ctrl+w',           'loadSplashScreen',         loadSplashScreen)
+	mp.add_forced_key_binding('KP4',              'setShaderPass1',           setShaderPass1)
+	mp.add_forced_key_binding("KP5",              'setShaderPass2',           setShaderPass2)
+	mp.add_forced_key_binding("KP6",              'setShaderPass3',           setShaderPass3)
+	mp.add_forced_key_binding("Shift+KP_LEFT",    'clearShaderPass1',         clearShaderPass1)
+	mp.add_forced_key_binding('Shift+KP_BEGIN',   'clearShaderPass2',         clearShaderPass2)
+	mp.add_forced_key_binding('Shift+KP_RIGHT',   'clearShaderPass3',         clearShaderPass3)
+	mp.add_forced_key_binding('=',                'swapShaderPasses',         swapShaderPasses)
+	mp.add_forced_key_binding("[",                'prevShader',               prevShader)
+	mp.add_forced_key_binding("]",                'nextShader',               nextShader)
+	mp.add_forced_key_binding('Ctrl+l',           'loadLastModifiedShader',   loadLastModifiedShader)
+	mp.add_forced_key_binding('Ctrl+p',           'resetShaderPresets',       resetShaderPresets)
+	mp.add_forced_key_binding("Ctrl+s",           'promptForSecondsToSeekTo', promptForSecondsToSeekTo)
+	mp.add_forced_key_binding("Ctrl+r",           'promptForRenamePrefix',    promptForRenamePrefix)
+	mp.add_forced_key_binding('Ctrl+R',           'reloadThisScript',         reloadThisScript)
+	mp.add_forced_key_binding('Ctrl+o',           'toggleOrderBySize',        toggleOrderBySize)
+	mp.add_forced_key_binding('Ctrl+u',           'generateShaderFileData',   generateShaderFileData)
+	mp.add_forced_key_binding('Ctrl+z',           'generateDeleteCommand',    generateDeleteCommand)
+	mp.add_forced_key_binding('Ctrl+x',           'generateRenameCommand',    generateRenameCommand)
+	mp.add_forced_key_binding('Ctrl+v',           'dumpShaderPresets',        dumpShaderPresets)
+	mp.add_forced_key_binding('KP7',              'kp7',                      setLoopPointA)
+	mp.add_forced_key_binding('KP8',              'kp8',                      clearLoopPoints)
+	mp.add_forced_key_binding('KP9',              'kp9',                      setLoopPointB)
 end
 
 
@@ -791,17 +863,20 @@ end
 
 
 function handleEndFile(evt)
-	-- mp.commandv("show_text", evt.reason)
-	clearLoopPoints()
+	if settings.debugMode then
+		showText("handleEndFile: reason is " .. evt.reason)
+	end
+	clearLoopPoints(true)
 end
 
-
-
-
+function reloadThisScript()
+	mp.commandv("load-script", "~~/scripts/mpv_totalcontrol.lua")
+	msg.error("reloaded mpv_totalcontrol")
+end
 
 function main()
 	generateShaderFileData()
-	settings.shaderPresets = deepCopy(presets01)
+	resetShaderPresets()
 	bindKeys()
 	mp.register_event("end-file", handleEndFile)
 end
