@@ -86,6 +86,7 @@ local settings = {
 		aac  = true,
 	},
 	fileList = {},
+	fileIndex = 1,
 	dir = "",
 	orderByNaturalNumbers = false,
 	orderBySize = false,
@@ -97,22 +98,51 @@ local settings = {
 	pass1 = "",
 	pass2 = "",
 	pass3 = "",
+	shaderIndex_pass1 = 0,
+	shaderIndex_pass2 = 0,
+	shaderIndex_pass3 = 0,
+	shaderGroup_pass1 = "",
+	shaderGroup_pass2 = "",
+	shaderGroup_pass3 = "",
 	whichPass = "pass2",
 	shadersGrouped = {},
 	shaderCountsByGroup = {},
 	shaderPresets = {},
 	renamePrefix = "aaa ",
+	humanResponseDelay = 0.3,
 	debugMode = false
 }
 
 
 
+function round(x)
+	local f = math.floor(x)
+	if x == f then return f
+	else return math.floor(x + 0.5)
+	end
+end
 
+function toPrecision2(x)
+	return math.floor(x * 100) / 100
+end
 
 function showText(str)
 	mp.commandv("show_text", str)
 	msg.warn(str)
 end
+
+function showError(str)
+	mp.commandv("show_text", str)
+	msg.error(str)
+end
+
+function hasDuration()
+	local duration = mp.get_property("duration")
+	return not( duration == nil or tonumber(duration) == 0 )
+end
+
+
+
 
 function loadShaderPresets()
 	local file = loadfile(settings.shaderPresetsFilePath)
@@ -239,10 +269,14 @@ end
 function showCurrentTimeSeconds()
 	local currentPositionSeconds = math.floor(tonumber(mp.get_property('time-pos')))
 	local durationSeconds = math.floor(tonumber(mp.get_property('duration')))
+	showText(currentPositionSeconds .. " / " .. durationSeconds)
+end
+
+function showCurrentTimeSecondsPrecise()
+	local currentPositionSeconds = toPrecision2(tonumber(mp.get_property('time-pos')))
+	local durationSeconds = toPrecision2(tonumber(mp.get_property('duration')))
 	local percentage = math.floor(currentPositionSeconds * 100 / durationSeconds)
-	local str = currentPositionSeconds .. " / " .. durationSeconds .. " [" .. percentage .. "]"
-	mp.commandv("show_text", str)
-	msg.warn(str)
+	showText(currentPositionSeconds .. " / " .. durationSeconds .. " [" .. percentage .. "]")
 end
 
 function getCurrentDir()
@@ -288,9 +322,8 @@ function loadFile(filename)
 	local fullpath = utils.join_path(settings.dir, filename)
 	local doesFileExist = checkFileExists(fullpath)
 	if doesFileExist then
-		mp.commandv("show_text", filename)
 		mp.commandv("loadfile", fullpath, "replace")
-		msg.warn(filename)
+		showText(filename)
 	else
 		cacheFileList()
 	end
@@ -309,6 +342,8 @@ function getIndexOfCurrentFile(files, currentFileName)
 	for index, fileName in ipairs(files) do
 		if fileName == currentFileName then
 			return index
+		-- elseif fileName > currentFileName then
+		-- 	return math.max(index - 1, 1)
 		end
 	end
 	return -1
@@ -320,14 +355,19 @@ function moveToFile(step)
 		cacheFileList()
 	end
 
+	if #settings.fileList < 2 then
+		showText("No files to move to")
+		return
+	end
+
 	local currentFileName = mp.get_property("filename")
-	local nextIndex = 0
+	local nextIndex = 1
 	local foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
 
-	if foundIndex == -1 then
-		cacheFileList()
-		foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
-	end
+	-- if foundIndex == -1 then
+	-- 	cacheFileList()
+	-- 	foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
+	-- end
 
 	if foundIndex ~= -1 then
 		nextIndex = foundIndex + step
@@ -338,10 +378,15 @@ function moveToFile(step)
 				nextIndex = #settings.fileList
 			end
 		end
-		local filename = settings.fileList[nextIndex]
-		loadFile(filename)
+		settings.fileIndex = nextIndex
+		loadFile(settings.fileList[nextIndex])
 	else
-		msg.error("Did not find current file in list")
+		msg.error("Did not find current file in list, trying index")
+		if settings.fileIndex then
+			loadFile(settings.fileList[settings.fileIndex])
+		else
+			msg.error("Could not use settings.fileIndex")
+		end
 	end
 end
 
@@ -497,13 +542,20 @@ function executeCommand()
 		settings[settings.whichPass] = group .. "/" .. shaderFile
 		applyShaders()
 	else
-		local message = string.format("No shader for group %s at index %d", group, shaderIndex - 1)
-		mp.commandv("show_text", message)
-		msg.error(message)
+		showError(string.format("No shader for group %s at index %d", group, shaderIndex - 1))
 	end
 end
 
-function buildShaderString()
+function splitGroupAndShaderName(path)
+	local index = string.find(path, "/")
+	if index ~= nil then
+		return string.sub(path, 0, index - 1), string.sub(path, index + 1, string.len(path) - 5)
+	else
+		return path, ""
+	end
+end
+
+function buildShaderString(group)
 	local SHADERS_DIR = settings.shadersDir .. "/"
 	local LIST_SEPARATOR_UNIX = ":"
 	local messageSegments = {}
@@ -511,8 +563,11 @@ function buildShaderString()
 
 	for index, pass in ipairs({ "pass1", "pass2", "pass3" }) do
 		if isValidShaderName(settings[pass]) then
-			local index = getIndexByFileName(settings[pass])
-			local message = string.format("%s [%s]", removeExtension(settings[pass]), index)
+			local shaderIndex = getIndexByFileName(settings[pass])
+			local group, shaderFileStem = splitGroupAndShaderName(settings[pass])
+			settings["shaderIndex_" .. pass] = shaderIndex
+			settings["shaderGroup_" .. pass] = group
+			local message = string.format("%s: %s %s: %s", index, group, shaderIndex, shaderFileStem)
 			table.insert(messageSegments, message)
 			table.insert(shaderFilePaths, SHADERS_DIR .. settings[pass])
 		end
@@ -583,7 +638,7 @@ function getCurrentGroupShaderCount()
 	local groupShaderCount = settings.shaderCountsByGroup[settings.shaderGroup]
 
 	if type(groupShaderCount) ~= "number" then
-		msg.error("getCurrentGroupShaderCount: groupShaderCount is " .. type(groupShaderCount))
+		msg.error(string.format("getCurrentGroupShaderCount: groupShaderCount for group %s is %s", settings.shaderGroup, type(groupShaderCount)))
 		groupShaderCount = 99
 	else
 		groupShaderCount = groupShaderCount - 1
@@ -680,21 +735,24 @@ end
 
 
 
-
 function setLoopPointA()
-	local timePos = mp.get_property("time-pos")
+	if not hasDuration() then return end
+	local isCoreIdle = mp.get_property("core-idle")
+	local delay = 0
+	if isCoreIdle == "no" then delay = settings.humanResponseDelay end
+	local timePos = math.max(toPrecision2(mp.get_property("time-pos")) - delay, 0)
 	mp.set_property("ab-loop-a", timePos)
-	local message = "Point A set to " .. timePos
-	mp.commandv("show_text", message)
-	msg.warn(message)
+	showText("Point A set to " .. timePos)
 end
 
 function setLoopPointB()
-	local timePos = mp.get_property("time-pos")
+	if not hasDuration() then return end
+	local isCoreIdle = mp.get_property("core-idle")
+	local delay = 0
+	if isCoreIdle == "no" then delay = settings.humanResponseDelay end
+	local timePos = toPrecision2(mp.get_property("time-pos")) - delay
 	mp.set_property("ab-loop-b", timePos)
-	local message = "Point B set to " .. timePos
-	mp.commandv("show_text", message)
-	msg.warn(message)
+	showText("Point B set to " .. timePos)
 	local pointA = mp.get_property("ab-loop-a")
 	if pointA ~= "no" then
 		mp.commandv("seek", pointA, "absolute")
@@ -702,13 +760,13 @@ function setLoopPointB()
 end
 
 function clearLoopPoints(shouldSuppressMessage)
+	-- if not hasDuration() then return end
 	mp.set_property("ab-loop-a", "no")
 	mp.set_property("ab-loop-b", "no")
 	if not shouldSuppressMessage then
 		showText("Loop points cleared")
 	end
 end
-
 
 
 
@@ -794,6 +852,62 @@ end
 
 
 
+function showProperty(propName)
+	showText(propName .. ": " .. mp.get_property(propName))
+end
+
+function promptForShowProperty()
+	input.get({
+		prompt = "Enter the property name to show:",
+		submit = showProperty
+	})
+end
+
+
+
+
+function loadPass1FromCurrent()
+	showText(string.format("%s %s", settings.shaderGroup_pass1, settings.shaderIndex_pass1))
+	settings.shaderGroup = settings.shaderGroup_pass1
+	settings.shaderDigits = settings.shaderIndex_pass1
+	settings.whichPass = "pass1"
+end
+
+function loadPass2FromCurrent()
+	showText(string.format("%s %s", settings.shaderGroup_pass2, settings.shaderIndex_pass2))
+	settings.shaderGroup = settings.shaderGroup_pass2
+	settings.shaderDigits = settings.shaderIndex_pass2
+	settings.whichPass = "pass2"
+end
+
+
+
+
+function getHumanReadableFileSize(fileSizeBytes)
+	local bucketMap = {}
+	bucketMap[3] = "KB"
+	bucketMap[6] = "MB"
+	bucketMap[9] = "GB"
+
+	local exp = math.floor(math.log(fileSizeBytes, 10))
+	local bucket = math.floor(exp / 3) * 3
+	local number = math.floor(fileSizeBytes / (10 ^ bucket))
+	return string.format("%s %s", number, bucketMap[bucket]);
+end
+
+function showFileInfo()
+	showText(mp.get_property("filename"))
+	-- local fileSizeBytes = mp.get_property("file-size")
+	-- showText(filename .. " " .. getHumanReadableFileSize(fileSizeBytes))
+end
+
+function showCurrentShaders()
+	local _, message = buildShaderString()
+	mp.commandv("show_text", message)
+end
+
+
+
 
 function bindKeys()
 	for key, shaderGroup in pairs(shaderGroupsByKey) do
@@ -804,6 +918,7 @@ function bindKeys()
 		mp.add_forced_key_binding(tostring(i), 'setShaderNumber' .. i, setShaderNumber(i))
 	end
 
+	mp.add_forced_key_binding('INS',              'showFileInfo',             showFileInfo)
 	mp.add_forced_key_binding('HOME',             'moveToFirstFile',          moveToFirstFile)
 	mp.add_forced_key_binding('END',              'cacheFileList',            cacheFileList)
 	mp.add_forced_key_binding('PGDWN',            'moveToNextFile',           moveToNextFile)
@@ -854,6 +969,7 @@ function bindKeys()
 	mp.add_forced_key_binding("]",                'nextShader',               nextShader)
 	mp.add_forced_key_binding('Ctrl+l',           'loadLastModifiedShader',   loadLastModifiedShader)
 	mp.add_forced_key_binding('Ctrl+p',           'resetShaderPresets',       resetShaderPresets)
+	mp.add_forced_key_binding('Ctrl+P',           'promptForShowProperty',    promptForShowProperty)
 	mp.add_forced_key_binding("Ctrl+s",           'promptForSecondsToSeekTo', promptForSecondsToSeekTo)
 	mp.add_forced_key_binding("Ctrl+r",           'promptForRenamePrefix',    promptForRenamePrefix)
 	mp.add_forced_key_binding('Ctrl+R',           'reloadThisScript',         reloadThisScript)
@@ -863,11 +979,14 @@ function bindKeys()
 	mp.add_forced_key_binding('Ctrl+x',           'generateRenameCommand',    generateRenameCommand)
 	mp.add_forced_key_binding('Ctrl+v',           'dumpShaderPresets',        dumpShaderPresets)
 	mp.add_forced_key_binding('DEL',              'showCurrentTimeSeconds',   showCurrentTimeSeconds)
+	mp.add_forced_key_binding('Ctrl+.',           'showCurrentTimePrecise',   showCurrentTimeSecondsPrecise)
+	mp.add_forced_key_binding('Ctrl+;',           'loadPass1FromCurrent',     loadPass1FromCurrent)
+	mp.add_forced_key_binding("Ctrl+'",           'loadPass2FromCurrent',     loadPass2FromCurrent)
+	mp.add_forced_key_binding("Ctrl+/",           'showCurrentShaders',       showCurrentShaders)
 	mp.add_forced_key_binding('KP7',              'kp7',                      setLoopPointA)
 	mp.add_forced_key_binding('KP8',              'kp8',                      clearLoopPoints)
 	mp.add_forced_key_binding('KP9',              'kp9',                      setLoopPointB)
 end
-
 
 
 
