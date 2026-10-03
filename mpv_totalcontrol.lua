@@ -84,6 +84,7 @@ local settings = {
 		mov  = true,
 		psd  = true,
 		aac  = true,
+		['3gp'] = true,
 	},
 	fileList = {},
 	fileIndex = 1,
@@ -269,7 +270,8 @@ end
 function showCurrentTimeSeconds()
 	local currentPositionSeconds = math.floor(tonumber(mp.get_property('time-pos')))
 	local durationSeconds = math.floor(tonumber(mp.get_property('duration')))
-	showText(currentPositionSeconds .. " / " .. durationSeconds)
+	local percentage = math.floor(currentPositionSeconds * 100 / durationSeconds)
+	showText(currentPositionSeconds .. " / " .. durationSeconds .. " [" .. percentage .. "]")
 end
 
 function showCurrentTimeSecondsPrecise()
@@ -852,6 +854,33 @@ end
 
 
 
+function splitPair(s)
+    local a, b = s:match("^(%-?%d+)/(%-?%d+)$")
+    if not a then
+        showError("expected format 'int/int'")
+    end
+    return tonumber(a), tonumber(b)
+end
+
+function setLoopPoints(str)
+	local a, b = splitPair(str)
+	if type(a) == "number" and type(b) == "number" and a < b then
+		mp.set_property("ab-loop-a", a)
+		mp.set_property("ab-loop-b", b)
+	end
+end
+
+function promptForLoopPoints()
+	input.get({
+		prompt = "Enter the A/B timestamps in seconds:",
+		submit = setLoopPoints
+	})
+end
+
+
+
+
+
 function showProperty(propName)
 	showText(propName .. ": " .. mp.get_property(propName))
 end
@@ -978,6 +1007,7 @@ function bindKeys()
 	mp.add_forced_key_binding('Ctrl+z',           'generateDeleteCommand',    generateDeleteCommand)
 	mp.add_forced_key_binding('Ctrl+x',           'generateRenameCommand',    generateRenameCommand)
 	mp.add_forced_key_binding('Ctrl+v',           'dumpShaderPresets',        dumpShaderPresets)
+	mp.add_forced_key_binding('Ctrl+b',           'promptForLoopPoints',      promptForLoopPoints)
 	mp.add_forced_key_binding('DEL',              'showCurrentTimeSeconds',   showCurrentTimeSeconds)
 	mp.add_forced_key_binding('Ctrl+.',           'showCurrentTimePrecise',   showCurrentTimeSecondsPrecise)
 	mp.add_forced_key_binding('Ctrl+;',           'loadPass1FromCurrent',     loadPass1FromCurrent)
