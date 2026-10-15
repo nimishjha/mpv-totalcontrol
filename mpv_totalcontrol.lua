@@ -179,10 +179,10 @@ end
 function toggleOrderBySize()
 	if settings.orderBySize == true then
 		settings.orderBySize = false
-		cacheFileList()
+		forceCacheFileList()
 	else
 		settings.orderBySize = true
-		cacheFileList()
+		forceCacheFileList()
 	end
 end
 
@@ -306,14 +306,26 @@ function cacheFileList()
 	end
 
 	msg.warn(#files .. " playable files found")
+
+	settings.fileList = files
+	settings.dir = dir
+	settings.fileIndex = getIndexOfCurrentFile()
+end
+
+function forceCacheFileList()
+	cacheFileList()
 	if settings.orderBySize == true then
 		mp.commandv("show_text", "Refreshed file list (ordered by size)")
 	else
 		mp.commandv("show_text", "Refreshed file list (ordered by name)")
 	end
+end
 
-	settings.fileList = files
-	settings.dir = dir
+function cacheFileListIfRequired()
+	local fileDir = getCurrentDir()
+	if settings.dir ~= fileDir then
+		cacheFileList()
+	end
 end
 
 function checkFileExists(path)
@@ -329,21 +341,20 @@ function openFile(filename)
 		mp.commandv("loadfile", fullpath, "replace")
 		showText(filename)
 	else
+		msg.error(filename .. " not found in current directory")
 		cacheFileList()
 	end
 end
 
 function moveToFirstFile()
-	local dir = getCurrentDir()
-	if not (dir == settings.dir) then
-		cacheFileList()
-	end
+	cacheFileListIfRequired()
 	local firstFile = settings.fileList[1]
 	openFile(firstFile)
 end
 
-function getIndexOfCurrentFile(files, currentFileName)
-	for index, fileName in ipairs(files) do
+function getIndexOfCurrentFile()
+	local currentFileName = mp.get_property("filename")
+	for index, fileName in ipairs(settings.fileList) do
 		if fileName == currentFileName then
 			return index
 		end
@@ -352,39 +363,22 @@ function getIndexOfCurrentFile(files, currentFileName)
 end
 
 function moveToFile(step)
-	local dir = getCurrentDir()
-	if not dir == settings.dir then
-		cacheFileList()
-	end
+	cacheFileListIfRequired()
 
 	if #settings.fileList < 2 then
 		showText("No files to move to")
 		return
 	end
 
-	local currentFileName = mp.get_property("filename")
-	local nextIndex = 1
-	local foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
-
-	if foundIndex ~= -1 then
-		nextIndex = foundIndex + step
-		if nextIndex > #settings.fileList then
-			nextIndex = 1
-		else
-			if nextIndex < 1 then
-				nextIndex = #settings.fileList
-			end
-		end
-		settings.fileIndex = nextIndex
-		openFile(settings.fileList[nextIndex])
-	else
-		msg.error("Did not find current file in list, trying index")
-		if settings.fileIndex then
-			openFile(settings.fileList[settings.fileIndex])
-		else
-			msg.error("Could not use settings.fileIndex")
-		end
+	local nextIndex = settings.fileIndex + step
+	if nextIndex > #settings.fileList then
+		nextIndex = 1
+	elseif nextIndex < 1 then
+		nextIndex = #settings.fileList
 	end
+
+	settings.fileIndex = nextIndex
+	openFile(settings.fileList[nextIndex])
 end
 
 function moveToNextFile()
@@ -956,7 +950,7 @@ function bindKeys()
 
 	mp.add_forced_key_binding('INS',              'showFileInfo',             showFileInfo)
 	mp.add_forced_key_binding('HOME',             'moveToFirstFile',          moveToFirstFile)
-	mp.add_forced_key_binding('END',              'cacheFileList',            cacheFileList)
+	mp.add_forced_key_binding('END',              'forceCacheFileList',       forceCacheFileList)
 	mp.add_forced_key_binding('PGDWN',            'moveToNextFile',           moveToNextFile)
 	mp.add_forced_key_binding('PGUP',             'moveToPreviousFile',       moveToPreviousFile)
 	mp.add_forced_key_binding('Ctrl+PGDWN',       'moveBy10',                 moveBy(10))
@@ -1037,7 +1031,7 @@ end
 
 function reloadThisScript()
 	mp.commandv("load-script", "~~/scripts/mpv_totalcontrol.lua")
-	msg.error("reloaded mpv_totalcontrol")
+	showText("reloaded mpv_totalcontrol")
 end
 
 function main()
