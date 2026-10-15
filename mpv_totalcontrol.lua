@@ -268,6 +268,7 @@ function parseFiles(res, delimiter)
 end
 
 function showCurrentTimeSeconds()
+	if not hasDuration() then return end
 	local currentPositionSeconds = math.floor(tonumber(mp.get_property('time-pos')))
 	local durationSeconds = math.floor(tonumber(mp.get_property('duration')))
 	local percentage = math.floor(currentPositionSeconds * 100 / durationSeconds)
@@ -275,6 +276,7 @@ function showCurrentTimeSeconds()
 end
 
 function showCurrentTimeSecondsPrecise()
+	if not hasDuration() then return end
 	local currentPositionSeconds = toPrecision2(tonumber(mp.get_property('time-pos')))
 	local durationSeconds = toPrecision2(tonumber(mp.get_property('duration')))
 	local percentage = math.floor(currentPositionSeconds * 100 / durationSeconds)
@@ -320,7 +322,7 @@ function checkFileExists(path)
 	return res.status == 0
 end
 
-function loadFile(filename)
+function openFile(filename)
 	local fullpath = utils.join_path(settings.dir, filename)
 	local doesFileExist = checkFileExists(fullpath)
 	if doesFileExist then
@@ -337,15 +339,13 @@ function moveToFirstFile()
 		cacheFileList()
 	end
 	local firstFile = settings.fileList[1]
-	loadFile(firstFile)
+	openFile(firstFile)
 end
 
 function getIndexOfCurrentFile(files, currentFileName)
 	for index, fileName in ipairs(files) do
 		if fileName == currentFileName then
 			return index
-		-- elseif fileName > currentFileName then
-		-- 	return math.max(index - 1, 1)
 		end
 	end
 	return -1
@@ -353,7 +353,7 @@ end
 
 function moveToFile(step)
 	local dir = getCurrentDir()
-	if not (dir == settings.dir) then
+	if not dir == settings.dir then
 		cacheFileList()
 	end
 
@@ -366,11 +366,6 @@ function moveToFile(step)
 	local nextIndex = 1
 	local foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
 
-	-- if foundIndex == -1 then
-	-- 	cacheFileList()
-	-- 	foundIndex = getIndexOfCurrentFile(settings.fileList, currentFileName)
-	-- end
-
 	if foundIndex ~= -1 then
 		nextIndex = foundIndex + step
 		if nextIndex > #settings.fileList then
@@ -381,11 +376,11 @@ function moveToFile(step)
 			end
 		end
 		settings.fileIndex = nextIndex
-		loadFile(settings.fileList[nextIndex])
+		openFile(settings.fileList[nextIndex])
 	else
 		msg.error("Did not find current file in list, trying index")
 		if settings.fileIndex then
-			loadFile(settings.fileList[settings.fileIndex])
+			openFile(settings.fileList[settings.fileIndex])
 		else
 			msg.error("Could not use settings.fileIndex")
 		end
@@ -569,7 +564,7 @@ function buildShaderString(group)
 			local group, shaderFileStem = splitGroupAndShaderName(settings[pass])
 			settings["shaderIndex_" .. pass] = shaderIndex
 			settings["shaderGroup_" .. pass] = group
-			local message = string.format("%s: %s %s: %s", index, group, shaderIndex, shaderFileStem)
+			local message = string.format("%s: %s %s - %s", index, group, shaderIndex, shaderFileStem)
 			table.insert(messageSegments, message)
 			table.insert(shaderFilePaths, SHADERS_DIR .. settings[pass])
 		end
@@ -756,7 +751,10 @@ function setLoopPointB()
 	mp.set_property("ab-loop-b", timePos)
 	showText("Point B set to " .. timePos)
 	local pointA = mp.get_property("ab-loop-a")
-	if pointA ~= "no" then
+	if pointA == "no" then
+		mp.set_property("ab-loop-a", 0)
+		mp.commandv("seek", 0, "absolute")
+	else
 		mp.commandv("seek", pointA, "absolute")
 	end
 end
@@ -855,9 +853,9 @@ end
 
 
 function splitPair(s)
-    local a, b = s:match("^(%-?%d+)/(%-?%d+)$")
+    local a, b = s:match("^([%d%.]+) ([%d%.]+)$")
     if not a then
-        showError("expected format 'int/int'")
+        showError("expected format 'number number'")
     end
     return tonumber(a), tonumber(b)
 end
@@ -865,8 +863,11 @@ end
 function setLoopPoints(str)
 	local a, b = splitPair(str)
 	if type(a) == "number" and type(b) == "number" and a < b then
+		b = math.min(b, tonumber(mp.get_property("duration")))
 		mp.set_property("ab-loop-a", a)
 		mp.set_property("ab-loop-b", b)
+		mp.commandv("seek", a, "absolute")
+		showText(string.format("Loop: %.1f %.1f", a, b))
 	end
 end
 
@@ -913,15 +914,21 @@ end
 
 
 function getHumanReadableFileSize(fileSizeBytes)
-	local bucketMap = {}
-	bucketMap[3] = "KB"
-	bucketMap[6] = "MB"
-	bucketMap[9] = "GB"
+	local bucketMap = {
+		[3] = "KB",
+		[6] = "MB",
+		[9] = "GB"
+	}
 
 	local exp = math.floor(math.log(fileSizeBytes, 10))
 	local bucket = math.floor(exp / 3) * 3
-	local number = math.floor(fileSizeBytes / (10 ^ bucket))
-	return string.format("%s %s", number, bucketMap[bucket]);
+	local unit = bucketMap[bucket]
+	if unit ~= nil then
+		local number = math.floor(fileSizeBytes / (10 ^ bucket))
+		return string.format("%s %s", number, unit);
+	else
+		return "OUT_OF_RANGE"
+	end
 end
 
 function showFileInfo()
