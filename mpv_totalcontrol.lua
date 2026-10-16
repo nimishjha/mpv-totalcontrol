@@ -342,7 +342,12 @@ function openFile(filename)
 		showText(filename)
 	else
 		msg.error(filename .. " not found in current directory")
+		local cachedIndex = settings.fileIndex
 		cacheFileList()
+		local fileToOpen = settings.fileList[cachedIndex]
+		if fileToOpen then
+			openFile(fileToOpen)
+		end
 	end
 end
 
