@@ -924,7 +924,8 @@ end
 
 
 function showProperty(propName)
-	showText(propName .. ": " .. mp.get_property(propName))
+	local propValue = mp.get_property(propName) or "NO_VALUE"
+	showText(propName .. ": " .. propValue)
 end
 
 function promptForShowProperty()
