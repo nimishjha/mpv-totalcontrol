@@ -111,7 +111,7 @@ local settings = {
 	shaderPresets = {},
 	renamePrefix = "aaa ",
 	humanResponseDelay = 0.3,
-	debugMode = false
+	isDebugMode = false
 }
 
 
@@ -289,7 +289,9 @@ function getCurrentDir()
 	if not pwd or not relpath then return end
 	local path = utils.join_path(pwd, relpath)
 	local dir = utils.split_path(path)
-	-- msg.warn(string.format("pwd %s\nrelpath %s\npath %s\ndir %s\n", pwd, relpath, path, dir))
+	if settings.isDebugMode then
+		msg.warn(string.format("pwd %s\nrelpath %s\npath %s\ndir %s\n", pwd, relpath, path, dir))
+	end
 	return dir
 end
 
@@ -324,6 +326,12 @@ end
 function cacheFileListIfRequired()
 	local fileDir = getCurrentDir()
 	if settings.dir ~= fileDir then
+		cacheFileList()
+		return
+	end
+
+	local fileFromIndex = settings.fileList[settings.fileIndex]
+	if fileFromIndex and mp.get_property('filename') ~= fileFromIndex then
 		cacheFileList()
 	end
 end
@@ -759,7 +767,6 @@ function setLoopPointB()
 end
 
 function clearLoopPoints(shouldSuppressMessage)
-	-- if not hasDuration() then return end
 	mp.set_property("ab-loop-a", "no")
 	mp.set_property("ab-loop-b", "no")
 	if not shouldSuppressMessage then
@@ -767,6 +774,41 @@ function clearLoopPoints(shouldSuppressMessage)
 	end
 end
 
+function decrementLoopPointA()
+	local str = mp.get_property("ab-loop-a")
+	if str == "no" then return end
+
+	local loopPointA = math.max(0, tonumber(str) - 0.1)
+	showText("Loop point A is now " .. loopPointA)
+	mp.set_property("ab-loop-a", loopPointA)
+end
+
+function incrementLoopPointA()
+	local str = mp.get_property("ab-loop-a")
+	if str == "no" then return end
+
+	local loopPointA = math.min(tonumber(mp.get_property("duration")), tonumber(str) + 0.1)
+	showText("Loop point A is now " .. loopPointA)
+	mp.set_property("ab-loop-a", loopPointA)
+end
+
+function decrementLoopPointB()
+	local str = mp.get_property("ab-loop-b")
+	if str == "no" then return end
+
+	local loopPointB = math.max(0, tonumber(str) - 0.1)
+	showText("Loop point B is now " .. loopPointB)
+	mp.set_property("ab-loop-b", loopPointB)
+end
+
+function incrementLoopPointB()
+	local str = mp.get_property("ab-loop-b")
+	if str == "no" then return end
+
+	local loopPointB = math.min(tonumber(mp.get_property("duration")), tonumber(str) + 0.1)
+	showText("Loop point B is now " .. loopPointB)
+	mp.set_property("ab-loop-b", loopPointB)
+end
 
 
 
@@ -1022,13 +1064,17 @@ function bindKeys()
 	mp.add_forced_key_binding('KP7',              'kp7',                      setLoopPointA)
 	mp.add_forced_key_binding('KP8',              'kp8',                      clearLoopPoints)
 	mp.add_forced_key_binding('KP9',              'kp9',                      setLoopPointB)
+	mp.add_forced_key_binding('Ctrl+F1',          'decrementLoopPointA',      decrementLoopPointA)
+	mp.add_forced_key_binding('Ctrl+F2',          'incrementLoopPointA',      incrementLoopPointA)
+	mp.add_forced_key_binding('Ctrl+F3',          'decrementLoopPointB',      decrementLoopPointB)
+	mp.add_forced_key_binding('Ctrl+F4',          'incrementLoopPointB',      incrementLoopPointB)
 end
 
 
 
 
 function handleEndFile(evt)
-	if settings.debugMode then
+	if settings.isDebugMode then
 		showText("handleEndFile: reason is " .. evt.reason)
 	end
 	clearLoopPoints(true)
